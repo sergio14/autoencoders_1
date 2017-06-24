@@ -1,0 +1,80 @@
+---
+title: "Técnicas de  clustering aplicado al estudio de variantes de genomas virales"
+output:
+  html_document: default
+  fig_height: 6
+  fig_width: 10
+  code_folding: hide
+  html_notebook: null
+---
+
+
+```{r  message=FALSE, warning=FALSE, setup}
+# ## Biocondunctors
+# source("https://bioconductor.org/biocLite.R")
+# biocLite()
+# 
+# ## Biostrings
+# source("https://bioconductor.org/biocLite.R")
+# biocLite("Biostrings")
+# 
+# ## msa
+# source("http://www.bioconductor.org/biocLite.R")
+# biocLite("msa")
+
+```
+
+
+
+### Leemos secuencias Biostrings
+```{r  message=FALSE, warning=FALSE, setup}
+library(Biostrings)
+muestra="secuencias1.fasta"
+seq <- readDNAStringSet(muestra, "fasta")
+seq
+```
+
+
+### Algunas estadísticas 
+```{r  message=FALSE, warning=FALSE, setup}
+str(seq)
+```
+
+
+### Algunas estadísticas 
+```{r  message=FALSE, warning=FALSE, setup}
+#nombres
+names(seq)
+#longitud
+width(seq)
+#frecuencia de nucleotidos
+alphabetFrequency(seq)
+#traducir a proteina
+translate(seq)
+#Buscar algun patron
+matchPattern("AGCCCA", seq[[1]], max.mismatch=1) 
+
+```
+
+
+
+### Alineamiento de las secuencias
+```{r  message=FALSE, warning=FALSE, setup}
+library(msa)
+Align <- msa(seq)
+print(Align, show="complete")
+```
+
+
+### Alineamiento de las secuencias - Pdf color
+```{r  message=FALSE, warning=FALSE, setup}
+msaPrettyPrint(Align, output="pdf", showNames="none",
+showLogo="none", askForOverwrite=FALSE, verbose=FALSE)
+```
+
+
+### Alineamiento vistos como matrices
+```{r  message=FALSE, warning=FALSE, setup}
+seq<-as.matrix(Align)
+as.data.frame(seq)
+```

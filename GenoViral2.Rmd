@@ -1,0 +1,938 @@
+---
+title: "Técnicas de  clustering aplicado al estudio de variantes de genomas virales"
+output:
+  html_document: default
+  fig_height: 6
+  fig_width: 10
+  code_folding: hide
+  html_notebook: null
+---
+
+
+
+```{r  message=FALSE, warning=FALSE, setup}
+#librerias necesarias
+library (Biostrings) # Manipulacion de secuencias y alineamientos
+
+library(ggplot2)
+library(plotly)
+library (RColorBrewer)
+
+library(tidyr)
+library(dplyr)
+library(reshape2)
+
+
+library(psych)
+library(irlba)
+library(fpc)
+
+#Archivos a utilizar y directorio
+muestra="muestra.fasta"
+lugar=setwd(getwd())
+```
+
+
+
+### Seteo del alineamiento a ser analizado
+```{r warning= FALSE, message=FALSE }
+seq <- readDNAStringSet(muestra, "fasta")
+names(seq)<-c("ref",1:499)
+tab<-as.matrix(seq)
+varID<-as.data.frame(cbind(names(seq) ,c("ref",rep("Var1",100),rep("Var2",50), rep("Var3",25),rep("Var4",10),rep("Var5",5),rep("wt",309)) ))
+
+```
+
+
+
+
+
+
+### Funciones que serán útiles para el análisis
+```{r  warning= FALSE, message=FALSE }
+########################################################################################################################
+## (StringSet2html)- FUNCION Para imprimir alineamiento de secuencias
+########################################################################################################################
+StringSet2html <- function(msa=data, file="aligment.html", start=1, end=length(data[[1]]), counter=20, browser=TRUE, ...) {
+        if(class(msa)=="AAStringSet") msa <- AAStringSet(msa, start=start, end=end)
+        if(class(msa)=="DNAStringSet") msa <- DNAStringSet(msa, start=start, end=end)
+        msavec <- sapply(msa, toString)
+        offset <- (counter-1)-nchar(nchar(msavec[1]))
+        legend <- paste(paste(paste(paste(rep(" ", offset), collapse=""), format(seq(0,  
+        nchar(msavec[1]), by=counter)[-1])), collapse=""), collapse="")
+        consensus <- consensusString(msavec, ambiguityMap=".", ...)
+        msavec <- paste(msavec, rowSums(as.matrix(msa) != "-"), sep="  ")
+        msavec <- paste(format(c("", names(msa), "Consensus"), justify="left"), c(legend, msavec, 
+        consensus), sep="  ")
+        msavec <- c("<html><pre>", msavec, "</pre></html>")
+        writeLines(msavec, file)
+        if(browser==TRUE) { browseURL(file) }
+}
+
+
+
+########################################################################################################################
+## (MutSiteFunv2)- FUNCION DETECCION DE CAMBIOS POR POSICION 
+########################################################################################################################
+MutSiteFunv2 <- function(ref, aln1, inserciones, tipo)
+{
+  if (inserciones == 0) # Todas las posiciones ser?n analizadas
+  {
+    if (tipo == 1) # Solo sustituciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        i<-1
+        while (i <= nrow(aln1))
+        {
+          if (aln1[i,j]!=ref[j])
+          {
+            if (aln1[i,j]!= z) 
+            { 
+              v[j] <- v[j]+1
+            }
+          }
+          i<-i+1
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+          namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+          i<-i+1
+        }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 2) # Solo deleciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        i<-1
+        while (i <= nrow(aln1))
+        {
+          if (aln1[i,j]!=ref[j])
+          {
+            if (aln1[i,j]== z)
+            { 
+              v[j] <- v[j]+1
+            }
+          }
+          i<-i+1
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 0) # todas las mutaciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        i<-1
+        while (i <= nrow(aln1))
+        {
+          if (aln1[i,j]!=ref[j])
+          {
+            v[j] <- v[j]+1
+          }
+          i<-i+1
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+    }
+    #Aca termina el if de Inserciones=1
+  }
+  if (inserciones == 1)   #Solo seran analizadas  posiciones sin inserciones
+  {     
+    if (tipo == 1) # Solo sustituciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]!="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              if (aln1[i,j]!= z) 
+              { 
+                v[j] <- v[j]+1
+              }
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 2) # Solo deleciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]!="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              if (aln1[i,j]== z) 
+              { 
+                v[j] <- v[j]+1
+              }
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+    }
+    if (tipo == 0) # todas las mutaciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]!="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              v[j] <- v[j]+1
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+    }
+  }
+  
+  if (inserciones == 2) #Solo inseciones ser?n analizadas
+  {     
+    if (tipo == 1) # Solo sustituciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]=="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              if (aln1[i,j]!= z) 
+              { 
+                v[j] <- v[j]+1
+              }
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 2) # Solo deleciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]=="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              if (aln1[i,j]== z) 
+              { 
+                v[j] <- v[j]+1
+              }
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 0) # Todas las mutaciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]=="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              v[j] <- v[j]+1
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+    }
+  }
+  
+  
+  return(res)
+}
+
+####################################################################################################################
+## MutSiteFunv2(<referencia>,<alineamiento>, <inserciones>, <tipo>) 
+
+
+#####################################################################################################################
+# 1-(SparMatFUN) GENERACION DE MATRIZ DE BAJA DENSIDAD - SPARSE MATRIX 
+#####################################################################################################################
+SparMatFun <- function(ref, aln1, puntM)
+{ 
+  mat<- list()
+  for (i in 1:nrow(aln1))
+    {
+    spar <- vector(mode="numeric", length=0)
+    for (j in 1:length(ref)) 
+      {
+      if (ref[j] !="-") {
+                        if (aln1[i,j] == "A") {
+                          spar<-c(spar,puntM[1,])
+                                      }
+                        if (aln1[i,j] == "T") {
+                          spar<-c(spar,puntM[2,])
+                        }
+                        if (aln1[i,j]== "C") {
+                          spar<-c(spar,puntM[3,])
+                        }
+                        if (aln1[i,j] == "G") {
+                          spar<-c(spar,puntM[4,])
+                        }
+                        if (aln1[i,j] == "-") {
+                          spar<-c(spar,puntM[5,])
+                        }
+          
+                }
+      else
+              {
+                   next          
+                }
+      
+#hasta aca for 1  
+mat[[i]]<-spar
+
+    }
+#hasta aca for 2  
+
+  }
+# hasta aca funcion
+  resu<-do.call(rbind,mat)
+  rownames(resu)<-rownames(aln1)
+  return(resu)
+}
+####################################################################################################################
+## SparMatFun(<referencia>,<alineamiento>,<matriz puntuacion)
+
+
+
+
+###########################################################################################################################
+##  5 SeqClus - Funcion para  extraer las cluster y el alineamiento 
+###########################################################################################################################
+SeqClus<-function(algoritmo,nombreColumna,identidad,Align){
+  library(Biostrings)
+  library(ggplot2)
+  library(ggdendro)
+  AlinCons<-DNAStringSet()
+  l<-data.frame()
+  k<-1 
+  #AlinCons<-dataDNA[c("referencia")]
+  for (i in unique(nombreColumna)) {
+    clus <- c(rownames(tabla[nombreColumna == i,]) )
+    assign(paste("cluster_",i,sep=""), Align[names(Align) %in% clus])
+    l[k,1]<-paste("cluster_",i,sep="")
+    l[k,2]<-length(get(paste("cluster_",i,sep="")))
+    assign(paste("cons_",i,"_",l[k,2],sep=""),DNAStringSet(consensusString(Align[names(Align) %in% clus], ambiguityMap="N", threshold= identidad)))
+    AlinCons<-append(AlinCons, get(paste("cons_",i,"_",l[k,2],sep="")))
+    writeXStringSet(get(paste("cluster_",i,sep="")), file=paste("cl_",i,"_DB_",identidad,".fasta",sep=""),format="fasta", width=160)
+    k<-k+1
+    
+  }	
+  colnames(l)<-c("cluster", "frecuencia")
+  names(AlinCons)<-c(paste(l[,1],"_(",l[,2],";_",round(((l[,2]*100)/length(Align)),digits=2) ,"%)",sep=""))
+  alo<-append(AlinCons[order(l$frecuencia, decreasing=TRUE)],Align[c("ref")], after=0)
+  aloSinRed<-alo[!duplicated(alo)]
+  alo_dis<-stringDist(alo, diag=TRUE, upper=TRUE)
+  disttree <- hclust(as.dist(alo_dis))
+  p<-ggdendrogram(disttree, rotate = TRUE, size = 4, theme_dendro = FALSE) + theme(axis.text=element_text(size=14, face="bold"))+ xlab("")+ ylab(paste(algoritmo,sep=""))
+  plot(p)
+  writeXStringSet(alo, file=paste("AlinCons","_",algoritmo,"_",identidad,"_",sep=""),format="fasta", width=160)
+  writeXStringSet(aloSinRed, file=paste("AlinCons_UNIQUE","_",algoritmo,"_",identidad,sep=""),format="fasta", width=160)
+  return(l)
+}
+####################################################################################################################################
+## SeqClus(tabla$DBscan_1.5,0.5)
+#######################################################################################################################
+
+
+
+
+#Paletas de color
+c6 <- c("tomato", "forest green", "dark blue", "purple2", "goldenrod4", "gray20")
+#display.brewer.all()
+c12=brewer.pal(12,"Set3")
+c9=brewer.pal(9,"Set1")
+
+
+```
+
+
+## Generar un visualización del alineamiento
+```{r warning= FALSE, message=FALSE  }
+StringSet2html(msa=seq, file="aligment.html", start=1, end=length(seq[[1]]), counter=20, browser=T, threshold=1.0)
+```
+
+
+### Análisis exploratorio del tipo de mutaciones encontradas
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+#Secuencia de referencia
+seq_ref<-tab[1,]
+#Alineamiento completo
+AlinConRef<-tab[,]
+#Alienamiento sin la referencia
+AlinSinRef<-tab[-1,]
+
+# Analisis de las Mutaciones por posicion
+SusTodo<-MutSiteFunv2(seq_ref,AlinSinRef,0,1)
+DelTodo<-MutSiteFunv2(seq_ref,AlinSinRef,0,2)
+SusNoIns<-MutSiteFunv2(seq_ref,AlinSinRef,1,1)
+DelNoIns<-MutSiteFunv2(seq_ref,AlinSinRef,1,2)
+
+
+#plot
+p <-
+    subplot(
+           plot_ly( x = 1:length(SusTodo), y = SusTodo, type = 'bar', name="Sust-Todo")  %>%
+              layout(yaxis = list(title = 'Frecuencia',range = c(0, 1))),
+            plot_ly( x = 1:length(DelTodo), y =DelTodo, type = 'bar',name="Del-Todo")  %>%
+              layout(yaxis = list(title = 'Frecuencia',range = c(0, 1))),
+            plot_ly( x = 1:length(SusNoIns), y = SusNoIns, type = 'bar', name="Sust-NoIns")  %>%
+              layout(yaxis = list(title = 'Frecuencia',range = c(0, 1))),
+            plot_ly( x = 1:length(DelNoIns), y = DelNoIns, type = 'bar', name="Del-NoIns")  %>%
+              layout(yaxis = list(title = 'Frecuencia',range = c(0, 1))),
+                nrows = 4,shareX = TRUE, shareY = FALSE , titleY = FALSE)
+p
+
+```
+
+
+
+### Generación de un espacio de vectores de secuencias y calculo de la matriz de Comparación
+```{r warning= FALSE, message=FALSE  }
+
+
+#MATRIZ 3
+puntM<-matrix(0,5,5)
+diag(puntM)<-c(1,1,1,1,1)
+colnames(puntM)<-c("A","T","C","G","-")
+rownames(puntM)<-c("si_A","si_T","si_C","si_G","si_-")
+
+
+# #MATRIZ 3
+# puntM3<-matrix(0,10,10)
+# for (i in 1:nrow(puntM3)){
+#   puntM3[i,]<-c(-10,-70,-30,-50,-90,-1,-4,-2,-3,-5)
+# }
+# diag(puntM3)<-c(10,70,30,50,90,1,4,2,3,5)
+# colnames(puntM3)<-c("A","T","C","G","-","A","T","C","G","-")
+# rownames(puntM3)<-c("si_A","si_T","si_C","si_G","si_-","si_A","si_T","si_C","si_G","si_-")
+# puntM3
+
+
+#Representación como vector en espacio
+#system.time(sparM<-SparMatFun(seq_ref,AlinSinRef,puntM))
+saveRDS(sparM,file="SparMatrixM3.rds")
+
+## Matriz de Comparación
+system.time(compM<-sparM%*%t(sparM))
+#saveRDS(compM,file="CompMatrixM3.rds")
+
+```
+
+### Descomposición Multidimensional
+```{r warning= FALSE, message=FALSE ,fig.align = 'center' }
+####################################################################################################################
+### 3   SVD
+####################################################################################################################
+
+# SVD irlba
+system.time(svd_seq<- scale(compM,center=TRUE,scale=FALSE) %*% irlba(scale(compM,center=TRUE,scale=FALSE), nv=10, nu=0)$v) #0.506
+#head(svd_seq, n=10)#PCs
+x_spar<-irlba(scale(compM,center=TRUE,scale=FALSE), nv=10, nu=0)
+
+
+
+####################################################################################################################
+#Análisis de la varianza explicada
+
+var<-cumsum(x_spar$d^2/sum(x_spar$d^2))
+Comp<- 1:length(var)
+VAR<-as.data.frame(cbind(Comp,var))
+p<-ggplot(VAR, aes(x =factor(Comp), y = var)) + geom_bar(stat = "identity")  + geom_hline(yintercept=0.95, col="red")
+ggplotly(p)
+
+
+
+```
+
+
+
+
+
+
+### Análisis de correlación
+```{r warning= FALSE, message=FALSE ,fig.align = 'center' }
+####################################################################################################################
+#Elegimos las componentes a utilizar
+svd_seq<-svd_seq[,1:4]
+# Correlation scatter plots for all combinations between the first four principal components.
+
+cormat <- round(cor(svd_seq),4)
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+
+
+p<-ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile()
+ggplotly(p)
+```
+
+### Análisis de la ubicación de las variantes en el nuevo espacio multidimensional
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+library(plotly)
+
+pc<-as.data.frame(svd_seq[,1:3])%>%
+                      rename(Dim1=V1,
+                             Dim2=V2,
+                             Dim3=V3)
+
+p <- plot_ly(pc, x = ~Dim1, y = ~Dim2, z = ~Dim3, color = ~as.factor(varID$V2[2:length(varID$V2)]),text = varID$V2[2:length(varID$V2)]) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Dim1'),
+                     yaxis = list(title = 'Dim2'),
+                     zaxis = list(title = 'Dim3')))
+
+
+
+
+
+
+plot(pc$Dim1, pc$Dim2, col=as.factor(varID$V2[2:length(varID$V2)]))
+plot(pc$Dim1, pc$Dim3, col=as.factor(varID$V2[2:length(varID$V2)]))
+```
+
+
+
+
+
+### Aproximación al numero de clusters - Número de clusters vs error entre clusters - Kmeans
+```{r warning= FALSE, message=FALSE ,fig.align = 'center' }
+
+#####################################################################################################
+## VALIDACION DEL NUMERO DE CLUSTERS
+######################################################################################################
+
+#####################################################################################################
+###error cuadrado medio kmeans
+#####################################################################################################
+
+# find optimal number of clusters for k-means
+ks <- 2:50
+# use within sum of squares (look for the knee)
+WSS <- sapply(ks, FUN=function(k) {
+  kmeans(scale(svd_seq), centers=k, nstart=5)$tot.withinss #Total within-cluster sum of squares,
+})
+par(mfrow = c(1, 2), pty="s")
+
+p <- plot_ly( x = ks, y = WSS, type = 'scatter', mode = 'lines')%>%
+        layout(title = "Número óptimo de clusters ",
+         yaxis = list(zeroline = FALSE, title="within-cluster sum of squares - Kmeans"),
+         xaxis = list(zeroline = FALSE, title= "Número de clusters") )
+p
+```
+
+
+
+###  Aproximación al numero de clusters - Número de clusters vs error entre clusters - Kmeans
+```{r warning= FALSE, message=FALSE,fig.align = 'center'}
+
+#####################################################################################################
+# use average silhouette width (look for the max)
+#####################################################################################################
+
+#svd_seq_dis <- dist(svd_seq) # default is Euclidean
+
+library(fpc)
+#armamo una matriz de distancia a partir de las PCs
+svd_seq_dis <- as.matrix(dist(scale(svd_seq), diag=T, upper=T))
+ks <- 2:20
+ASW <- sapply(ks, FUN=function(k) {
+  cluster.stats(svd_seq_dis, kmeans(svd_seq, centers=k, nstart=5)$cluster)$avg.silwidth    
+})
+
+p <- plot_ly( x = ks, y = ASW, type = 'scatter', mode = 'lines')%>%
+        layout(title = "Número óptimo de clusters ",
+         yaxis = list(zeroline = FALSE, title="AVG Silhouette width - Kmeans"),
+         xaxis = list(zeroline = FALSE, title= "Número de clusters") )
+p
+
+```
+
+
+
+### Aproximación al numero de clusters - Número de clusters vs Silhouette 
+```{r warning= FALSE, message=FALSE ,fig.align = 'center' }
+#############################################################################################################
+### PAM
+################################################################################################################
+#usando PAM
+library (cluster)
+## Note that "k=1" won't work!
+asw <- numeric(20)
+for (k in 2:20)
+  asw[k] <- pam(scale(svd_seq),k,stand=TRUE) $ silinfo $ avg.width
+k.best <- which.max(asw)
+
+p <- plot_ly( x = 1:20, y = asw, type = 'scatter', mode = 'lines')%>%
+        layout(title = "Número óptimo de clusters ",
+         yaxis = list(zeroline = FALSE, title="AVG Silhouette width - PAM"),
+         xaxis = list(zeroline = FALSE, title= "Número de clusters") )
+p
+```
+
+
+
+#### Determinación de variantes utilizando K-menans 
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+#################################################################################################################
+### KMEANS
+#################################################################################################################
+set.seed(42)
+km<-kmeans(scale(svd_seq), centers=6, nstart=5)
+d <- dist(scale(svd_seq)) # default is Euclidean
+#Chequeamos como dio
+plot(silhouette(km$cluster, d), col=c12[1:length(unique(km$cluster))], main="Kmeans clustering")
+
+pc<-as.data.frame(svd_seq[,1:3])%>%
+                      rename(Dim1=V1,
+                             Dim2=V2,
+                             Dim3=V3)
+
+p <- plot_ly(pc, x = ~Dim1, y = ~Dim2, z = ~Dim3, color = ~as.factor(km$cluster[1:length(km$cluster)]),text = varID$V2[2:length(varID$V2)]) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Dim1'),
+                     yaxis = list(title = 'Dim2'),
+                     zaxis = list(title = 'Dim3')))
+
+#p
+
+### check
+table(varID$V2[2:length(varID$V2)],km$cluster)
+
+plot(pc$Dim1, pc$Dim2, col=as.factor(km$cluster))
+plot(pc$Dim1, pc$Dim3, col=as.factor(km$cluster))
+```
+
+
+
+# Determinación de variantes utilizando Clustering Jerárquico -  Complete
+
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+#######################################################################
+### Hierarchical clustering
+#######################################################################
+
+d <- dist(scale(svd_seq)) # default is Euclidean
+
+#######################################################################
+### COMPLETE LINKAGE
+#######################################################################
+hc <- hclust(d, method="complete")
+# dendrogram
+plot(hc, label=FALSE)
+rect.hclust(hc, k=6)
+
+#Ajustamos el corte de los grupos
+cluster_complete <- cutree(hc, k=6)
+
+
+# silhouette HC complete
+plot(silhouette(cluster_complete, d), col=c12[1:length(unique(cluster_complete))] , main="Hierarchical clustering")
+
+
+
+pc<-as.data.frame(svd_seq[,1:3])%>%
+                      rename(Dim1=V1,
+                             Dim2=V2,
+                             Dim3=V3)
+
+p <- plot_ly(pc, x = ~Dim1, y = ~Dim2, z = ~Dim3, color = ~as.factor(cluster_complete),text = varID$V2[2:length(varID$V2)]) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Dim1'),
+                     yaxis = list(title = 'Dim2'),
+                     zaxis = list(title = 'Dim3')))
+
+p
+
+
+table(varID$V2[2:length(varID$V2)],cluster_complete)
+```
+
+
+
+# Determinación de variantes utilizando Clustering Jerárquico -  Single
+
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+#######################################################################
+### SINGLE LINKAGE
+#######################################################################
+hc_single <- hclust(d, method="single")
+plot(hc_single,label=FALSE)
+rect.hclust(hc_single, k=6)
+
+
+#corte del numero de grupos
+cluster_single <- cutree(hc_single, k=6)
+
+# silhouette HC_single
+plot(silhouette(cluster_single, d), col=c12[1:length(unique(cluster_single))], main="SINGLE LINKAGE")
+
+
+pc<-as.data.frame(svd_seq[,1:3])%>%
+                      rename(Dim1=V1,
+                             Dim2=V2,
+                             Dim3=V3)
+
+p <- plot_ly(pc, x = ~Dim1, y = ~Dim2, z = ~Dim3, color = ~as.factor(cluster_single),text = varID$V2[2:length(varID$V2)]) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Dim1'),
+                     yaxis = list(title = 'Dim2'),
+                     zaxis = list(title = 'Dim3')))
+
+p
+
+table(varID$V2[2:length(varID$V2)],cluster_single)
+```
+
+
+
+
+
+# Determinación de variantes utilizando Clustering Jerárquico -  Ward
+
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+#######################################################################
+### SINGLE WARD
+#######################################################################
+hc_ward <- hclust(d, method="ward.D2")
+plot(hc_ward,label=FALSE)
+rect.hclust(hc_ward, k=6)
+
+
+#Corte del numero de grupos
+cluster_ward <- cutree(hc_ward, k=6)
+
+# silhouette ward
+plot(silhouette(cluster_ward, d), col=c12[1:length(unique(cluster_ward))],main="SINGLE WARD" )
+
+
+p <- plot_ly(pc, x = ~Dim1, y = ~Dim2, z = ~Dim3, color = ~as.factor(cluster_ward), text = varID$V2[2:length(varID$V2)]) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Dim1'),
+                     yaxis = list(title = 'Dim2'),
+                     zaxis = list(title = 'Dim3')))
+
+p
+
+table(varID$V2[2:length(varID$V2)],cluster_ward)
+
+
+```
+
+
+# Determinación de variantes utilizando Clustering por densidad - DBSCAN
+
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+#######################################################################
+### DBSCAM
+#######################################################################
+
+#Primero se construye una matriz de distancia para seleccionar eps y MinPts
+pc_spar_dis <- as.matrix(dist(scale(svd_seq), diag=T, upper=T))
+
+# Se crea una función que dado un vector lo ordena y toma el 4 valor 
+get.ord <- function(row, ord) { sort(row, decreasing=FALSE)[ord]}
+
+# Para cada fila de la matriz de distancia, toma el vector y con la funcion get.ord  toma el k valor más cercano. En este caso se 
+# K=4 vecino más cercano, esto guarda un vector con todas distancias al k vecino mas cercano para cada row de la matriz.
+kdists <- apply(svd_seq_dis,1,function(x) get.ord(x,4) )
+
+
+
+p <- plot_ly( x = 1:length(kdists), y = sort(kdists))
+p
+
+# A partir de este gráfico podemos estimar valores iniciales de eps y MinPts
+# Si los clusters están bien definidos, en el gráfico de distancias se verá un salto bien marcado y el punto de inflexión se puede usar para
+# seleccionar ambos parámetros: eps será el valor de distancia en el punto de inflexión y MinPTS el rango mínimo de secuencias que esperamos
+#Arrancamos con un 1% osea 5 secuencias
+
+
+# salida y un gráfico para evaluar el agrupamiento
+#sobre datos PCA
+pc_spar.db <- dbscan(svd_seq_dis, eps=1.5, MinPts=5, method="dist") # arrancamos aca
+pc_spar.db
+
+
+
+plot(silhouette(pc_spar.db$cluster, d), col=c12[1:length(unique(pc_spar.db$cluster))], main="dbscam")
+
+p <- plot_ly(pc, x = ~Dim1, y = ~Dim2, z = ~Dim3, color = ~as.factor(pc_spar.db$cluster), text = varID$V2[2:length(varID$V2)]) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Dim1'),
+                     yaxis = list(title = 'Dim2'),
+                     zaxis = list(title = 'Dim3')))
+
+p
+
+table(varID$V2[2:length(varID$V2)],pc_spar.db$cluster)
+
+```
+
+
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+
+tabla<-as.data.frame(cbind(km$cluster, cluster_complete, cluster_single, cluster_ward, pc_spar.db$cluster))
+names<-c("kmeans","HCComp","HCSing","HCWard","DBscan")
+colnames(tabla)<-names
+rownames(tabla)<-varID$V1[2:length(varID$V1)]
+
+
+SeqClus("Kmeans",tabla$DBscan,0.5,seq)
+SeqClus("Clustering Jerarquico Complete",tabla$HCComp,0.5,seq)
+SeqClus("Clustering Jerarquico Simple",tabla$HCSing,0.5,seq)
+SeqClus("Clustering Jerarquico Ward",tabla$HCWard,0.5,seq)
+SeqClus("dbscan",tabla$DBscan,0.5,seq)
+```
+
+
+
+
+
