@@ -1,0 +1,335 @@
+
+---
+title: "Features_Exploring"
+output:
+  html_document: default
+  html_notebook:
+    code_folding: hide
+    fig_height: 6
+    fig_width: 10
+---
+
+
+```{r  message=FALSE, warning=FALSE, setup}
+library( autoencoder )
+library( ripa )
+library(dplyr)
+library(jpeg)
+```
+
+
+```{r warning= FALSE, message=FALSE }
+
+yo<-readJPEG("mai.jpg" , native = FALSE)
+bar<- yo[,,1]+yo[,,2]+yo[,,3]
+# normalize
+bar <- bar/max(bar)
+# one of many ways to plot
+
+bar<-imagematrix(bar, type=NULL,
+            ncol=dim(bar)[1], nrow=dim(bar)[2], noclipping=FALSE)
+plot(c(0,1),c(0,1),t='n')
+rasterImage(bar, 0,0,1,1)
+#image(bar)
+#dim(bar)
+bar
+```
+
+
+
+```{r warning= FALSE, message=FALSE }
+
+#transpose
+x_train<-t(bar)
+x_train
+
+
+#Specify the autoencoder
+fit <- autoencode ( X.train = x_train ,
+X.test = NULL ,
+nl = 3 , # number of layers
+N.hidden = 60 , #  hidden nodes equals 60 with logistic activation functions.
+unit.type = "logistic" ,
+lambda = 1e-5 , #weight decay parameter, typically set to a small value
+beta = 1e-5 , #weight of the sparsity penalty term
+rho = 0.3 , #   sparsity is set to 0.3  sampled from a normal distribution N(0,epsilon**2 )
+epsilon =0.1 , # parameter used in rho sampling
+max.iterations = 100 , #maximum number of iterations is set to 100
+optim.method = c( "BFGS" ) ,
+rel.tol =0.01 ,
+rescale.flag = TRUE ,#rescale the training matrix x_train so its values liein the range 0-1  (for the logistic activation function)
+rescaling.offset = 0.001)
+
+```
+
+
+```{r warning= FALSE, message=FALSE }
+ attributes ( fit )
+fit$mean.error.training.set
+
+## low dimension representation
+features <- predict ( fit , X.input = x_train ,hidden.output = TRUE )
+hid <- features$X.output
+plot(c(0,1),c(0,1),t='n')
+rasterImage(t(hid), 0,0,1,1)
+
+```
+
+
+
+
+```{r warning= FALSE, message=FALSE }
+#reconstruct image
+pred <- predict ( fit , X.input = x_train ,
+hidden.output = FALSE )
+
+pred$mean.error
+recon <- pred$X.output
+#image (t( recon ) )
+plot(c(0,1),c(0,1),t='n')
+rasterImage(t(recon), 0,0,1,1)
+```
+
+
+
+
+## Example with data 
+```{r warning= FALSE, message=FALSE }
+
+aburl="http://archive.ics.uci.edu/ml/machine-learning-databases/abalone/abalone.data"
+
+names = c("sex","length", "diameter",  "height", "whole_weight", "shucked_weight", "viscera_weight", "shell_weight","rings")
+data = read.table ( aburl , header = F , sep = ","  ,col.names = names )
+
+#remove anomalous data
+data<- data%>%filter(height!=0)%>% select(-sex)
+#convert to matrix
+data1 <-t( data )
+data1 <-as.matrix ( data1 )
+
+#Run atuoencoder
+set.seed(2016)
+n=nrow(data)
+train<-sample(1:n,10,FALSE)
+fit<-autoencode(X.train=data1[,train],
+X.test=NULL,
+nl=3,
+N.hidden=5,
+unit.type="logistic",
+lambda=1e-5,
+beta=1e-5,
+rho=0.07,
+epsilon=0.1,
+max.iterations=100,
+optim.method=c("BFGS"),
+rel.tol=0.01,
+rescale.flag=TRUE,
+rescaling.offset=0.001)
+
+## Error
+fit$mean.error.training.set
+
+ 
+```
+
+
+
+```{r warning= FALSE, message=FALSE }
+#low dimension data
+features<-predict(fit,X.input=data1[,
+train],hidden.output=TRUE)
+features$X.output
+
+#reconstruction
+pred<-predict(fit,X.input=data1[,train
+],hidden.output=FALSE)
+pred$X.output
+```
+
+
+
+####  STACKED AUTOENCODERS
+```{r warning= FALSE, message=FALSE }
+
+aburl="http://archive.ics.uci.edu/ml/machine-learning-databases/abalone/abalone.data"
+
+names = c("sex","length", "diameter",  "height", "whole_weight", "shucked_weight", "viscera_weight", "shell_weight","rings")
+data = read.table ( aburl , header = F , sep = ","  ,col.names = names )
+
+#remove anomalous data
+data<- data%>%filter(height!=0)%>% select(-sex)
+#convert to matrix
+#data1 <-t( data )
+data1 <-as.matrix (data)
+
+#sample of 10 cases
+set.seed (2016)
+n = nrow(data)
+train <- sample(1:n , 10 , FALSE )
+
+```
+
+
+
+
+
+
+```{r warning= FALSE, message=FALSE }
+library(SAENET)
+
+fit<-SAENET.train(X.train=data1[train,],
+n.nodes=c(5,4,2),  #3 hidden layers with 5, 4 and 2 nodes
+unit.type="logistic",
+lambda=1e-5,
+beta=1e-5,
+rho=0.07,
+epsilon=0.1,
+max.iterations=100,
+optim.method=c("BFGS"),
+rel.tol=0.01,
+rescale.flag=TRUE,
+rescaling.offset=0.001)
+
+
+```
+
+
+
+```{r warning= FALSE, message=FALSE }
+#output from last layer
+plot(fit[[3]]$X.output[,1],fit[[3]]$X.output[,1])
+```
+
+
+
+
+
+### SDA stacking Denoising Autoencoders
+
+```{r warning= FALSE, message=FALSE }
+require(RcppDL)
+require("ltm")
+data(Mobility)
+data<-Mobility
+
+
+set.seed(17)
+n=nrow(data)
+sample<-sample(1:n,1000,FALSE)
+data<-as.matrix(Mobility[sample,])
+n=nrow(data)
+train<-sample(1:n,800,FALSE)
+
+x_train<-matrix(as.numeric(unlist(data[train,])),nrow=nrow(data[train,]))
+x_test<-matrix(as.numeric(unlist(data[-train,])),nrow=nrow(data[-train,]))
+
+x_train<-x_train[,-3]
+x_test<-x_test[,-3] 
+
+```
+
+
+```{r warning= FALSE, message=FALSE }
+#response  variable training
+y_train<-data[train,3]
+temp<-ifelse(y_train==0,1,0)
+y_train<-cbind(y_train,temp)
+
+#response  variable testing
+y_test<-data[-train,3]
+temp1<-ifelse(y_test==0,1,0)
+y_test<-cbind(y_test,temp1)
+
+# fit the autoencoder for training
+hidden = c (10 ,10)
+fit <- Rsda ( x_train , y_train , hidden )
+
+
+
+```
+
+
+## Train the model 0% noise
+```{r warning= FALSE, message=FALSE }
+#set noise level to 0
+setCorruptionLevel ( fit , x = 0.0)
+summary ( fit )
+
+#other parameters to set
+#setFinetuneEpochs
+#setFinetuneLearningRate
+#setPretrainLearningRate
+#setPretrainEpochs
+#1- pretrain
+pretrain ( fit )
+#2- fine tune
+finetune ( fit )
+
+
+```
+
+
+## heck predict results 0% noise
+```{r warning= FALSE, message=FALSE }
+predProb <- predict ( fit , x_test )
+head ( predProb ,6)
+plot(predProb[,1], predProb[,2])
+head ( y_test ,3)
+```
+
+
+## heck predict results
+```{r warning= FALSE, message=FALSE }
+pred1<-ifelse(predProb[,1]>=0.5,1,0)
+table(pred1,y_test[,1], dnn=c("Predicted","Observed"))
+```
+
+
+
+
+
+
+## train a model 25% noise
+```{r warning= FALSE, message=FALSE }
+setCorruptionLevel(fit,x=0.25)
+pretrain(fit)
+finetune(fit)
+predProb<-predict(fit,x_test)
+pred1<-ifelse(predProb[,1]>=0.5,1,0)
+table(pred1,y_test[,1],dnn=c("Predicted","Observed"))
+
+```
+
+
+
+
+## train a model 50% noise
+```{r warning= FALSE, message=FALSE }
+setCorruptionLevel(fit,x=0.50)
+pretrain(fit)
+finetune(fit)
+predProb<-predict(fit,x_test)
+pred1<-ifelse(predProb[,1]>=0.5,1,0)
+table(pred1,y_test[,1],dnn=c("Predicted","Observed"))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
