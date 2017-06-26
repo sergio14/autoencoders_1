@@ -1,0 +1,588 @@
+---
+title: "Técnicas de  clustering aplicado al estudio de variantes de genomas virales"
+output:
+  html_document: default
+  fig_height: 6
+  fig_width: 10
+  code_folding: hide
+  html_notebook: null
+---
+
+
+
+```{r  message=FALSE, warning=FALSE, setup}
+
+#####################################################################
+#### Generic packages
+
+# List of packages for session
+.packages = c("ggplot2", "plotly", "dplyr","knitr", "RColorBrewer", "dplyr","tidyr","reshape2","psych","irlba","fpc" )
+
+# Install CRAN packages (if not already installed)
+.inst <- .packages %in% installed.packages()
+if(length(.packages[!.inst]) > 0) install.packages(.packages[!.inst])
+
+# Load packages into session 
+lapply(.packages, require, character.only=TRUE)
+
+
+
+
+#####################################################################
+###Specific packages
+
+## Biocondunctors
+source("https://bioconductor.org/biocLite.R")
+biocLite()
+
+# List of packages for session
+.packages = c("Biostrings", "msa" )
+
+# Install CRAN packages (if not already installed)
+.inst <- .packages %in% installed.packages()
+if(length(.packages[!.inst]) > 0) 
+ biocLite(.packages[!.inst])
+
+# Load packages into session 
+lapply(.packages, require, character.only=TRUE)
+
+
+
+```
+
+### Seteo del alineamiento a ser analizado
+```{r warning= FALSE, message=FALSE }
+#Archivos a utilizar y directorio
+input="/home/ubuntu/DATA/02_muestras_testeo/"
+file="muestra.fasta"
+
+system(paste0("mkdir ",input,"outputs"))
+output=paste0(input,"outputs/") 
+#lugar=setwd(getwd())
+
+```
+
+### Seteo del alineamiento a ser analizado
+```{r warning= FALSE, message=FALSE }
+seq <- readDNAStringSet(paste0(input,file), "fasta")
+names(seq)<-c("ref",1:499)
+tab<-as.matrix(seq)
+varID<-as.data.frame(cbind(names(seq) ,c("ref",rep("Var1",100),rep("Var2",50), rep("Var3",25),rep("Var4",10),rep("Var5",5),rep("wt",309)) ))
+saveRDS(varID,paste0(output,"varID.rds"))
+```
+
+
+
+
+
+
+### Funciones que serán útiles para el análisis
+```{r  warning= FALSE, message=FALSE }
+########################################################################################################################
+## (StringSet2html)- FUNCION Para imprimir alineamiento de secuencias
+########################################################################################################################
+StringSet2html <- function(msa=data, file="aligment.html", start=1, end=length(data[[1]]), counter=20, browser=TRUE, ...) {
+        if(class(msa)=="AAStringSet") msa <- AAStringSet(msa, start=start, end=end)
+        if(class(msa)=="DNAStringSet") msa <- DNAStringSet(msa, start=start, end=end)
+        msavec <- sapply(msa, toString)
+        offset <- (counter-1)-nchar(nchar(msavec[1]))
+        legend <- paste(paste(paste(paste(rep(" ", offset), collapse=""), format(seq(0,  
+        nchar(msavec[1]), by=counter)[-1])), collapse=""), collapse="")
+        consensus <- consensusString(msavec, ambiguityMap=".", ...)
+        msavec <- paste(msavec, rowSums(as.matrix(msa) != "-"), sep="  ")
+        msavec <- paste(format(c("", names(msa), "Consensus"), justify="left"), c(legend, msavec, 
+        consensus), sep="  ")
+        msavec <- c("<html><pre>", msavec, "</pre></html>")
+        writeLines(msavec, file)
+        if(browser==TRUE) { browseURL(file) }
+}
+
+
+
+########################################################################################################################
+## (MutSiteFunv2)- FUNCION DETECCION DE CAMBIOS POR POSICION 
+########################################################################################################################
+MutSiteFunv2 <- function(ref, aln1, inserciones, tipo)
+{
+  if (inserciones == 0) # Todas las posiciones ser?n analizadas
+  {
+    if (tipo == 1) # Solo sustituciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        i<-1
+        while (i <= nrow(aln1))
+        {
+          if (aln1[i,j]!=ref[j])
+          {
+            if (aln1[i,j]!= z) 
+            { 
+              v[j] <- v[j]+1
+            }
+          }
+          i<-i+1
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+          namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+          i<-i+1
+        }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 2) # Solo deleciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        i<-1
+        while (i <= nrow(aln1))
+        {
+          if (aln1[i,j]!=ref[j])
+          {
+            if (aln1[i,j]== z)
+            { 
+              v[j] <- v[j]+1
+            }
+          }
+          i<-i+1
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 0) # todas las mutaciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        i<-1
+        while (i <= nrow(aln1))
+        {
+          if (aln1[i,j]!=ref[j])
+          {
+            v[j] <- v[j]+1
+          }
+          i<-i+1
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+    }
+    #Aca termina el if de Inserciones=1
+  }
+  if (inserciones == 1)   #Solo seran analizadas  posiciones sin inserciones
+  {     
+    if (tipo == 1) # Solo sustituciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]!="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              if (aln1[i,j]!= z) 
+              { 
+                v[j] <- v[j]+1
+              }
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 2) # Solo deleciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]!="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              if (aln1[i,j]== z) 
+              { 
+                v[j] <- v[j]+1
+              }
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+    }
+    if (tipo == 0) # todas las mutaciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]!="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              v[j] <- v[j]+1
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+    }
+  }
+  
+  if (inserciones == 2) #Solo inseciones ser?n analizadas
+  {     
+    if (tipo == 1) # Solo sustituciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]=="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              if (aln1[i,j]!= z) 
+              { 
+                v[j] <- v[j]+1
+              }
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 2) # Solo deleciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]=="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              if (aln1[i,j]== z) 
+              { 
+                v[j] <- v[j]+1
+              }
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+      
+    }
+    if (tipo == 0) # Todas las mutaciones
+    {
+      z<-"-"
+      j<-1
+      v<- rep(0,ncol(aln1))
+      while (j <= ncol(aln1)) 
+      {
+        if (ref[j]=="-") {
+          i<-1
+          while (i <= nrow(aln1))
+          {
+            if (aln1[i,j]!=ref[j])
+            {
+              v[j] <- v[j]+1
+            }
+            i<-i+1
+          }
+        }
+        j<-j+1
+      }
+      res<-v/nrow(aln1)
+      
+      namesPos<- vector(mode="character", length=0) # renombramos los nombres de cada posicion
+      i<-1 #normales
+      for (k in 1:length(ref)){ 
+        namesPos<-c(namesPos,paste(ref[k],i,sep=" : ") )
+        i<-i+1
+      }
+      names(res)<-namesPos  
+    }
+  }
+  
+  
+  return(res)
+}
+
+####################################################################################################################
+## MutSiteFunv2(<referencia>,<alineamiento>, <inserciones>, <tipo>) 
+
+
+#####################################################################################################################
+# 1-(SparMatFUN) GENERACION DE MATRIZ DE BAJA DENSIDAD - SPARSE MATRIX 
+#####################################################################################################################
+SparMatFun <- function(ref, aln1, puntM)
+{ 
+  mat<- list()
+  for (i in 1:nrow(aln1))
+    {
+    spar <- vector(mode="numeric", length=0)
+    for (j in 1:length(ref)) 
+      {
+      if (ref[j] !="-") {
+                        if (aln1[i,j] == "A") {
+                          spar<-c(spar,puntM[1,])
+                                      }
+                        if (aln1[i,j] == "T") {
+                          spar<-c(spar,puntM[2,])
+                        }
+                        if (aln1[i,j]== "C") {
+                          spar<-c(spar,puntM[3,])
+                        }
+                        if (aln1[i,j] == "G") {
+                          spar<-c(spar,puntM[4,])
+                        }
+                        if (aln1[i,j] == "-") {
+                          spar<-c(spar,puntM[5,])
+                        }
+          
+                }
+      else
+              {
+                   next          
+                }
+      
+#hasta aca for 1  
+mat[[i]]<-spar
+
+    }
+#hasta aca for 2  
+
+  }
+# hasta aca funcion
+  resu<-do.call(rbind,mat)
+  rownames(resu)<-rownames(aln1)
+  return(resu)
+}
+####################################################################################################################
+## SparMatFun(<referencia>,<alineamiento>,<matriz puntuacion)
+
+
+
+
+###########################################################################################################################
+##  5 SeqClus - Funcion para  extraer las cluster y el alineamiento 
+###########################################################################################################################
+SeqClus<-function(algoritmo,nombreColumna,identidad,Align){
+  library(Biostrings)
+  library(ggplot2)
+  library(ggdendro)
+  AlinCons<-DNAStringSet()
+  l<-data.frame()
+  k<-1 
+  #AlinCons<-dataDNA[c("referencia")]
+  for (i in unique(nombreColumna)) {
+    clus <- c(rownames(tabla[nombreColumna == i,]) )
+    assign(paste("cluster_",i,sep=""), Align[names(Align) %in% clus])
+    l[k,1]<-paste("cluster_",i,sep="")
+    l[k,2]<-length(get(paste("cluster_",i,sep="")))
+    assign(paste("cons_",i,"_",l[k,2],sep=""),DNAStringSet(consensusString(Align[names(Align) %in% clus], ambiguityMap="N", threshold= identidad)))
+    AlinCons<-append(AlinCons, get(paste("cons_",i,"_",l[k,2],sep="")))
+    writeXStringSet(get(paste("cluster_",i,sep="")), file=paste("cl_",i,"_DB_",identidad,".fasta",sep=""),format="fasta", width=160)
+    k<-k+1
+    
+  }	
+  colnames(l)<-c("cluster", "frecuencia")
+  names(AlinCons)<-c(paste(l[,1],"_(",l[,2],";_",round(((l[,2]*100)/length(Align)),digits=2) ,"%)",sep=""))
+  alo<-append(AlinCons[order(l$frecuencia, decreasing=TRUE)],Align[c("ref")], after=0)
+  aloSinRed<-alo[!duplicated(alo)]
+  alo_dis<-stringDist(alo, diag=TRUE, upper=TRUE)
+  disttree <- hclust(as.dist(alo_dis))
+  p<-ggdendrogram(disttree, rotate = TRUE, size = 4, theme_dendro = FALSE) + theme(axis.text=element_text(size=14, face="bold"))+ xlab("")+ ylab(paste(algoritmo,sep=""))
+  plot(p)
+  writeXStringSet(alo, file=paste("AlinCons","_",algoritmo,"_",identidad,"_",sep=""),format="fasta", width=160)
+  writeXStringSet(aloSinRed, file=paste("AlinCons_UNIQUE","_",algoritmo,"_",identidad,sep=""),format="fasta", width=160)
+  return(l)
+}
+####################################################################################################################################
+## SeqClus(tabla$DBscan_1.5,0.5)
+#######################################################################################################################
+
+
+
+
+#Paletas de color
+c6 <- c("tomato", "forest green", "dark blue", "purple2", "goldenrod4", "gray20")
+#display.brewer.all()
+c12=brewer.pal(12,"Set3")
+c9=brewer.pal(9,"Set1")
+
+
+```
+
+
+## Generar un visualización del alineamiento
+```{r warning= FALSE, message=FALSE  }
+#StringSet2html(msa=seq, file="aligment.html", start=1, end=length(seq[[1]]), counter=20, browser=T, threshold=1.0)
+```
+
+
+### Análisis exploratorio del tipo de mutaciones encontradas
+```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
+
+#Secuencia de referencia
+seq_ref<-tab[1,]
+#Alineamiento completo
+AlinConRef<-tab[,]
+#Alienamiento sin la referencia
+AlinSinRef<-tab[-1,]
+
+# Analisis de las Mutaciones por posicion
+SusTodo<-MutSiteFunv2(seq_ref,AlinSinRef,0,1)
+DelTodo<-MutSiteFunv2(seq_ref,AlinSinRef,0,2)
+SusNoIns<-MutSiteFunv2(seq_ref,AlinSinRef,1,1)
+DelNoIns<-MutSiteFunv2(seq_ref,AlinSinRef,1,2)
+
+
+#plot
+p <-
+    subplot(
+           plot_ly( x = 1:length(SusTodo), y = SusTodo, type = 'bar', name="Sust-Todo")  %>%
+              layout(yaxis = list(title = 'Frecuencia',range = c(0, 1))),
+            plot_ly( x = 1:length(DelTodo), y =DelTodo, type = 'bar',name="Del-Todo")  %>%
+              layout(yaxis = list(title = 'Frecuencia',range = c(0, 1))),
+            plot_ly( x = 1:length(SusNoIns), y = SusNoIns, type = 'bar', name="Sust-NoIns")  %>%
+              layout(yaxis = list(title = 'Frecuencia',range = c(0, 1))),
+            plot_ly( x = 1:length(DelNoIns), y = DelNoIns, type = 'bar', name="Del-NoIns")  %>%
+              layout(yaxis = list(title = 'Frecuencia',range = c(0, 1))),
+                nrows = 4,shareX = TRUE, shareY = FALSE , titleY = FALSE)
+p
+
+```
+
+
+
+### Generación de un espacio de vectores de secuencias y calculo de la matriz de Comparación
+```{r warning= FALSE, message=FALSE  }
+
+
+#MATRIZ 3
+puntM<-matrix(0,5,5)
+diag(puntM)<-c(1,1,1,1,1)
+colnames(puntM)<-c("A","T","C","G","-")
+rownames(puntM)<-c("si_A","si_T","si_C","si_G","si_-")
+
+
+# #MATRIZ 3
+# puntM3<-matrix(0,10,10)
+# for (i in 1:nrow(puntM3)){
+#   puntM3[i,]<-c(-10,-70,-30,-50,-90,-1,-4,-2,-3,-5)
+# }
+# diag(puntM3)<-c(10,70,30,50,90,1,4,2,3,5)
+# colnames(puntM3)<-c("A","T","C","G","-","A","T","C","G","-")
+# rownames(puntM3)<-c("si_A","si_T","si_C","si_G","si_-","si_A","si_T","si_C","si_G","si_-")
+# puntM3
+
+
+#Representación como vector en espacio
+system.time(sparM<-SparMatFun(seq_ref,AlinSinRef,puntM))
+saveRDS(sparM,file=paste0(output,"SparMatrixM3.rds"))
+
+## Matriz de Comparación
+system.time(compM<-sparM%*%t(sparM))
+saveRDS(compM,file=paste0(output,"CompMatrixM3.rds"))
+
+```

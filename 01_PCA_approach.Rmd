@@ -11,36 +11,64 @@ output:
 
 
 ```{r  message=FALSE, warning=FALSE, setup}
-#librerias necesarias
-library (Biostrings) # Manipulacion de secuencias y alineamientos
 
-library(ggplot2)
-library(plotly)
-library (RColorBrewer)
+#####################################################################
+#### Generic packages
 
-library(tidyr)
-library(dplyr)
-library(reshape2)
+# List of packages for session
+.packages = c("ggplot2", "plotly", "dplyr","knitr", "RColorBrewer", "dplyr","tidyr","reshape2","psych","irlba","fpc" )
+
+# Install CRAN packages (if not already installed)
+.inst <- .packages %in% installed.packages()
+if(length(.packages[!.inst]) > 0) install.packages(.packages[!.inst])
+
+# Load packages into session 
+lapply(.packages, require, character.only=TRUE)
 
 
-library(psych)
-library(irlba)
-library(fpc)
 
-#Archivos a utilizar y directorio
-muestra="muestra.fasta"
-lugar=setwd(getwd())
+
+#####################################################################
+###Specific packages
+
+## Biocondunctors
+source("https://bioconductor.org/biocLite.R")
+biocLite()
+
+# List of packages for session
+.packages = c("Biostrings", "msa" )
+
+# Install CRAN packages (if not already installed)
+.inst <- .packages %in% installed.packages()
+if(length(.packages[!.inst]) > 0) 
+ biocLite(.packages[!.inst])
+
+# Load packages into session 
+lapply(.packages, require, character.only=TRUE)
+
+
+
 ```
-
-
 
 ### Seteo del alineamiento a ser analizado
 ```{r warning= FALSE, message=FALSE }
-seq <- readDNAStringSet(muestra, "fasta")
+#Archivos a utilizar y directorio
+input="/home/ubuntu/DATA/02_muestras_testeo/"
+file="muestra.fasta"
+
+system(paste0("mkdir ",input,"outputs"))
+output=paste0(input,"outputs/") 
+#lugar=setwd(getwd())
+
+```
+
+### Seteo del alineamiento a ser analizado
+```{r warning= FALSE, message=FALSE }
+seq <- readDNAStringSet(paste0(input,file), "fasta")
 names(seq)<-c("ref",1:499)
 tab<-as.matrix(seq)
 varID<-as.data.frame(cbind(names(seq) ,c("ref",rep("Var1",100),rep("Var2",50), rep("Var3",25),rep("Var4",10),rep("Var5",5),rep("wt",309)) ))
-
+saveRDS(varID,paste0(output,"varID.rds"))
 ```
 
 
@@ -488,7 +516,7 @@ c9=brewer.pal(9,"Set1")
 
 ## Generar un visualización del alineamiento
 ```{r warning= FALSE, message=FALSE  }
-StringSet2html(msa=seq, file="aligment.html", start=1, end=length(seq[[1]]), counter=20, browser=T, threshold=1.0)
+#StringSet2html(msa=seq, file="aligment.html", start=1, end=length(seq[[1]]), counter=20, browser=T, threshold=1.0)
 ```
 
 
@@ -550,12 +578,12 @@ rownames(puntM)<-c("si_A","si_T","si_C","si_G","si_-")
 
 
 #Representación como vector en espacio
-#system.time(sparM<-SparMatFun(seq_ref,AlinSinRef,puntM))
-saveRDS(sparM,file="SparMatrixM3.rds")
+system.time(sparM<-SparMatFun(seq_ref,AlinSinRef,puntM))
+saveRDS(sparM,file=paste0(output,"SparMatrixM3.rds"))
 
 ## Matriz de Comparación
 system.time(compM<-sparM%*%t(sparM))
-#saveRDS(compM,file="CompMatrixM3.rds")
+#saveRDS(compM,file=paste0(output,"CompMatrixM3.rds"))
 
 ```
 
@@ -607,13 +635,15 @@ p<-ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) +
 ggplotly(p)
 ```
 
+
+
 ### Análisis de la ubicación de las variantes en el nuevo espacio multidimensional
 ```{r warning= FALSE, message=FALSE ,fig.width = 10, fig.height = 10 , fig.align = 'center' }
 
 library(plotly)
 
 pc<-as.data.frame(svd_seq[,1:3])%>%
-                      rename(Dim1=V1,
+                      dplyr::rename(Dim1=V1,
                              Dim2=V2,
                              Dim3=V3)
 
@@ -623,13 +653,13 @@ p <- plot_ly(pc, x = ~Dim1, y = ~Dim2, z = ~Dim3, color = ~as.factor(varID$V2[2:
                      yaxis = list(title = 'Dim2'),
                      zaxis = list(title = 'Dim3')))
 
+p
 
 
 
 
-
-plot(pc$Dim1, pc$Dim2, col=as.factor(varID$V2[2:length(varID$V2)]))
-plot(pc$Dim1, pc$Dim3, col=as.factor(varID$V2[2:length(varID$V2)]))
+#plot(pc$Dim1, pc$Dim2, col=as.factor(varID$V2[2:length(varID$V2)]))
+#plot(pc$Dim1, pc$Dim3, col=as.factor(varID$V2[2:length(varID$V2)]))
 ```
 
 
